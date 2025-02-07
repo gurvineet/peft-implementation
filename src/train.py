@@ -4,14 +4,62 @@ import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from peft import get_peft_model, LoraConfig, TaskType
 from tqdm import tqdm
-from datasets import load_dataset, DownloadConfig
+from datasets import load_dataset
 from config import config
 from data_utils import prepare_dataloaders
 import time
+import psutil
+import os
+
+def log_memory_usage():
+    """Log current memory usage"""
+    process = psutil.Process(os.getpid())
+    print(f"\nCurrent memory usage: {process.memory_info().rss / 1024 / 1024:.2f} MB")
+
+def load_dataset_with_retry(max_retries=3, timeout=15):  # Further reduced timeout
+    """Load dataset with retry mechanism and detailed progress tracking"""
+    for attempt in range(max_retries):
+        try:
+            print(f"\nAttempt {attempt + 1}/{max_retries} to load dataset...")
+            print("Initializing dataset load with minimal size...")
+            log_memory_usage()
+
+            print("Starting dataset download...")
+            dataset = load_dataset(
+                "sealuzh/app_reviews",
+                split=f"train[:50]",  # Keeping minimal size
+                cache_dir=".cache"  # Explicit cache directory
+            )
+
+            print("Dataset download complete")
+            log_memory_usage()
+
+            print(f"Dataset loaded successfully with {len(dataset)} examples!")
+            print("Dataset features:", dataset.features)
+            print("\nSample entry:", dataset[0])
+
+            return dataset
+
+        except Exception as e:
+            print(f"\nAttempt {attempt + 1} failed")
+            print(f"Error type: {type(e).__name__}")
+            print(f"Error details: {str(e)}")
+            log_memory_usage()
+
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff
+                print(f"Waiting {wait_time} seconds before retrying...")
+                time.sleep(wait_time)
+            else:
+                print("All retry attempts exhausted.")
+                print("Final memory usage:")
+                log_memory_usage()
+                raise Exception(f"Failed to load dataset after {max_retries} attempts. Last error: {str(e)}")
 
 def setup_peft_model():
     """Initialize the PEFT model with LoRA configuration"""
-    print("Loading base model...")
+    print("\nInitializing base model...")
+    print(f"Using model: {config.base_model_name}")
     model = AutoModelForSequenceClassification.from_pretrained(
         config.base_model_name,
         num_labels=config.num_labels,
@@ -20,12 +68,15 @@ def setup_peft_model():
     )
 
     # Configure padding token for GPT-2
+    print("Configuring tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(config.base_model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
+        print("Set padding token to EOS token")
 
-    print("Creating LoRA configuration...")
+    print("\nCreating LoRA configuration...")
+    print(f"LoRA params - r: {config.lora_r}, alpha: {config.lora_alpha}, dropout: {config.lora_dropout}")
     peft_config = LoraConfig(
         task_type=TaskType.SEQ_CLS,
         r=config.lora_r,
@@ -35,8 +86,9 @@ def setup_peft_model():
         target_modules=["c_attn", "c_proj"]  # GPT-2 specific target modules
     )
 
-    print("Converting to PEFT model...")
+    print("\nConverting to PEFT model...")
     model = get_peft_model(model, peft_config)
+    print("\nTrainable parameters:")
     model.print_trainable_parameters()
 
     return model
@@ -48,9 +100,12 @@ def train_epoch(model, train_loader, optimizer, device, epoch):
     correct = 0
     total = 0
 
+    print(f"\nStarting training epoch {epoch+1}")
+    print(f"Number of batches: {len(train_loader)}")
+
     progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}", leave=True)
 
-    for batch in progress_bar:
+    for batch_idx, batch in enumerate(progress_bar):
         try:
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
@@ -77,12 +132,13 @@ def train_epoch(model, train_loader, optimizer, device, epoch):
             optimizer.step()
 
             progress_bar.set_postfix({
+                "batch": f"{batch_idx+1}/{len(train_loader)}",
                 "loss": f"{loss.item():.4f}",
                 "accuracy": f"{current_accuracy:.4f}"
             })
 
         except Exception as e:
-            print(f"Error in batch: {str(e)}")
+            print(f"\nError in batch {batch_idx}: {str(e)}")
             continue
 
     epoch_loss = total_loss / len(train_loader)
@@ -96,8 +152,10 @@ def evaluate(model, val_loader, device):
     correct = 0
     total = 0
 
+    print("\nStarting evaluation...")
     with torch.no_grad():
-        for batch in val_loader:
+        progress_bar = tqdm(val_loader, desc="Evaluating", leave=True)
+        for batch in progress_bar:
             try:
                 input_ids = batch["input_ids"].to(device)
                 attention_mask = batch["attention_mask"].to(device)
@@ -116,35 +174,20 @@ def evaluate(model, val_loader, device):
                 correct += (predictions == labels).sum().item()
                 total += labels.size(0)
 
+                current_accuracy = correct / total if total > 0 else 0
+                progress_bar.set_postfix({
+                    "loss": f"{loss:.4f}",
+                    "accuracy": f"{current_accuracy:.4f}"
+                })
+
             except Exception as e:
-                print(f"Error during evaluation: {str(e)}")
+                print(f"\nError during evaluation: {str(e)}")
                 continue
 
     accuracy = correct / total if total > 0 else 0
     avg_loss = total_loss / len(val_loader) if len(val_loader) > 0 else float('inf')
     return avg_loss, accuracy
 
-def load_dataset_with_retry(max_retries=3, timeout=100):
-    """Load dataset with retry mechanism"""
-    for attempt in range(max_retries):
-        try:
-            print(f"\nAttempt {attempt + 1}/{max_retries} to load dataset...")
-            download_config = DownloadConfig(timeout=timeout)
-            dataset = load_dataset(
-                "sealuzh/app_reviews",
-                split="train",
-                download_config=download_config
-            )
-            print("Dataset loaded successfully!")
-            return dataset
-        except Exception as e:
-            print(f"Attempt {attempt + 1} failed: {str(e)}")
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt  # Exponential backoff
-                print(f"Waiting {wait_time} seconds before retrying...")
-                time.sleep(wait_time)
-            else:
-                raise Exception("Failed to load dataset after maximum retries")
 
 def main():
     print("\n=== Starting PEFT Fine-tuning Process ===\n")
@@ -160,8 +203,8 @@ def main():
         full_dataset = full_dataset.shuffle(seed=42)
 
         # Calculate split sizes
-        train_size = 1000  # Using 1000 samples for training
-        test_size = 500    # Using 500 samples for testing
+        train_size = 40     # Using 40 samples for training
+        test_size = 10      # Using 10 samples for testing
         print(f"Using {train_size} examples for training and {test_size} for testing")
 
         # Split dataset
@@ -197,9 +240,13 @@ def main():
         print(f"\nTraining for {config.num_epochs} epochs...")
         best_accuracy = 0.0
 
+        # Create checkpoint directory if it doesn't exist
+        os.makedirs(config.output_dir, exist_ok=True)
+
         for epoch in range(config.num_epochs):
             print(f"\nEpoch {epoch + 1}/{config.num_epochs}")
             print("-" * 50)
+            log_memory_usage()  # Track memory usage before each epoch
 
             train_loss, train_accuracy = train_epoch(model, train_loader, optimizer, device, epoch)
             val_loss, val_accuracy = evaluate(model, val_loader, device)
@@ -208,19 +255,28 @@ def main():
             print(f"Train Loss: {train_loss:.4f} | Accuracy: {train_accuracy:.4f}")
             print(f"Val Loss: {val_loss:.4f} | Accuracy: {val_accuracy:.4f}")
 
+            # Save checkpoint after each epoch
+            checkpoint_path = os.path.join(config.output_dir, f"checkpoint_epoch_{epoch+1}")
+            model.save_pretrained(checkpoint_path)
+            print(f"Saved checkpoint to {checkpoint_path}")
+
             if val_accuracy > best_accuracy:
                 best_accuracy = val_accuracy
                 print(f"\nNew best accuracy: {best_accuracy:.4f}")
                 print("Saving best model...")
                 model.save_pretrained(f"{config.output_dir}/best")
 
+            log_memory_usage()  # Track memory usage after each epoch
+
     except Exception as e:
         print(f"\nError during training process: {str(e)}")
+        log_memory_usage()  # Log memory usage when error occurs
         raise e
 
     print("\nSaving final model...")
     model.save_pretrained(config.output_dir)
     print("Training completed!")
+    log_memory_usage()  # Final memory usage log
 
 if __name__ == "__main__":
     main()
