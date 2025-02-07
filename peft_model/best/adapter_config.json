@@ -26,8 +26,8 @@
   "rank_pattern": {},
   "revision": null,
   "target_modules": [
-    "c_attn",
-    "c_proj"
+    "c_proj",
+    "c_attn"
   ],
   "task_type": "SEQ_CLS",
   "use_dora": false,
