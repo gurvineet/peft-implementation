@@ -4,24 +4,27 @@ modules = ["python-3.11"]
 channel = "stable-24_05"
 
 [workflows]
-runButton = "Project"
+runButton = "Compare Models"
 
 [[workflows.workflow]]
 name = "Project"
 mode = "parallel"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Train PEFT Model"
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
 
 [[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Test Inference"
+task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "Compare Models"
+task = "shell.exec"
+args = """
+
+    git init
+    git add .
+    git commit -m \"Initial commit: PEFT implementation for GPT-2\"
+    """
 
 [[workflows.workflow]]
 name = "Train PEFT Model"

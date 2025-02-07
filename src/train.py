@@ -12,7 +12,6 @@ from transformers import (
 from peft import get_peft_model, LoraConfig, TaskType
 from datasets import load_dataset
 from config import config
-from data_utils import prepare_dataloaders
 import time
 import psutil
 import os
@@ -29,6 +28,21 @@ def compute_metrics(eval_pred):
     return {
         "accuracy": (predictions == labels).mean(),
     }
+
+def preprocess_function(examples, tokenizer):
+    """Preprocess the examples"""
+    # Tokenize the reviews
+    tokenized = tokenizer(
+        examples["review"],
+        truncation=True,
+        max_length=config.max_length,
+        padding="max_length",
+    )
+
+    # Convert star ratings to labels (0-5)
+    tokenized["labels"] = [min(5, max(0, star)) for star in examples["star"]]
+
+    return tokenized
 
 def load_dataset_with_retry(max_retries=3, timeout=15):
     """Load dataset with retry mechanism and detailed progress tracking"""
@@ -126,6 +140,19 @@ def main():
         # Setup model and tokenizer
         model, tokenizer = setup_peft_model()
 
+        # Preprocess the datasets
+        print("\nPreprocessing datasets...")
+        tokenized_train = dataset["train"].map(
+            lambda x: preprocess_function(x, tokenizer),
+            batched=True,
+            remove_columns=dataset["train"].column_names
+        )
+        tokenized_test = dataset["test"].map(
+            lambda x: preprocess_function(x, tokenizer),
+            batched=True,
+            remove_columns=dataset["test"].column_names
+        )
+
         # Setup training arguments
         training_args = TrainingArguments(
             output_dir=config.output_dir,
@@ -134,22 +161,24 @@ def main():
             per_device_eval_batch_size=config.batch_size,
             num_train_epochs=config.num_epochs,
             weight_decay=0.01,
-            evaluation_strategy="epoch",
+            eval_strategy="epoch",  # Updated from evaluation_strategy
             save_strategy="epoch",
             load_best_model_at_end=True,
             save_total_limit=2,
             logging_steps=10,
+            remove_unused_columns=False,
         )
 
-        # Initialize trainer
+        # Initialize trainer with processing_class instead of tokenizer
+        data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
         trainer = Trainer(
             model=model,
             args=training_args,
-            train_dataset=dataset["train"],
-            eval_dataset=dataset["test"],
-            tokenizer=tokenizer,
-            data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
+            train_dataset=tokenized_train,
+            eval_dataset=tokenized_test,
+            data_collator=data_collator,
             compute_metrics=compute_metrics,
+            # Removed deprecated tokenizer parameter
         )
 
         # Initial evaluation
