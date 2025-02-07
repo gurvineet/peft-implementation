@@ -19,6 +19,10 @@ args = "Train PEFT Model"
 task = "workflow.run"
 args = "Test Inference"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Compare Models"
+
 [[workflows.workflow]]
 name = "Train PEFT Model"
 author = "agent"
@@ -46,6 +50,20 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python src/inference.py"
+
+[[workflows.workflow]]
+name = "Compare Models"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python3 src/compare_models.py"
 
 [deployment]
 run = ["sh", "-c", "python src/train.py"]
