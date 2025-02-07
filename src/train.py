@@ -1,7 +1,7 @@
 """Main training script for PEFT fine-tuning"""
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from peft import get_peft_model, LoraConfig, TaskType
 from tqdm import tqdm
 from datasets import load_dataset
@@ -11,22 +11,30 @@ from data_utils import prepare_dataloaders
 def setup_peft_model():
     """Initialize the PEFT model with LoRA configuration"""
     print("Loading base model...")
-    model = AutoModelForCausalLM.from_pretrained(
+    model = AutoModelForSequenceClassification.from_pretrained(
         config.base_model_name,
+        num_labels=config.num_labels,
+        id2label=config.id2label,
+        label2id=config.label2id,
         trust_remote_code=True,
         device_map="auto",
-        torch_dtype=torch.float16,  # Use fp16 for efficiency
-        use_cache=False  # Disable KV-cache for training
+        torch_dtype=torch.float32,  # Use float32 for CPU training
     )
+
+    # Configure padding token
+    tokenizer = AutoTokenizer.from_pretrained(config.base_model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        model.config.pad_token_id = tokenizer.eos_token_id
 
     print("Creating LoRA configuration...")
     peft_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
+        task_type=TaskType.SEQ_CLS,  # Changed to sequence classification
         r=config.lora_r,
         lora_alpha=config.lora_alpha,
         lora_dropout=config.lora_dropout,
         bias="none",
-        target_modules=["q_proj", "v_proj"]  # Target attention modules
+        target_modules=["c_proj", "c_attn", "q_proj", "v_proj"]  # Updated target modules for GPT-2
     )
 
     print("Converting to PEFT model...")
@@ -40,6 +48,8 @@ def train_epoch(model, train_loader, optimizer, device, epoch):
     model.train()
     total_loss = 0
     total_batches = len(train_loader)
+    correct = 0
+    total = 0
 
     progress_bar = tqdm(enumerate(train_loader), 
                        total=total_batches,
@@ -50,17 +60,24 @@ def train_epoch(model, train_loader, optimizer, device, epoch):
         try:
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
+            labels = batch["labels"].to(device)
 
             optimizer.zero_grad()
 
             outputs = model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                labels=input_ids,
+                labels=labels,
             )
 
             loss = outputs.loss
             total_loss += loss.item()
+
+            # Calculate training accuracy
+            predictions = torch.argmax(outputs.logits, dim=1)
+            correct += (predictions == labels).sum().item()
+            total += labels.size(0)
+            current_accuracy = correct / total
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
@@ -70,23 +87,29 @@ def train_epoch(model, train_loader, optimizer, device, epoch):
             progress_bar.set_postfix({
                 "loss": f"{loss.item():.4f}",
                 "avg_loss": f"{avg_loss:.4f}",
+                "accuracy": f"{current_accuracy:.4f}",
                 "batch": f"{batch_idx+1}/{total_batches}"
             })
+
+            if (batch_idx + 1) % config.logging_steps == 0:
+                print(f"\nStep {batch_idx+1}/{total_batches}")
+                print(f"Average Loss: {avg_loss:.4f}")
+                print(f"Training Accuracy: {current_accuracy:.4f}")
 
         except RuntimeError as e:
             print(f"Error in batch {batch_idx}: {str(e)}")
             continue
 
-        if (batch_idx + 1) % config.logging_steps == 0:
-            print(f"\nStep {batch_idx+1}/{total_batches}")
-            print(f"Average Loss: {avg_loss:.4f}")
-
-    return total_loss / total_batches
+    epoch_accuracy = correct / total
+    print(f"\nEpoch {epoch+1} Training Accuracy: {epoch_accuracy:.4f}")
+    return total_loss / total_batches, epoch_accuracy
 
 def evaluate(model, val_loader, device):
     """Evaluate the model"""
     model.eval()
     total_loss = 0
+    correct = 0
+    total = 0
     progress_bar = tqdm(val_loader, desc="Evaluating", leave=True)
 
     with torch.no_grad():
@@ -94,23 +117,33 @@ def evaluate(model, val_loader, device):
             try:
                 input_ids = batch["input_ids"].to(device)
                 attention_mask = batch["attention_mask"].to(device)
+                labels = batch["labels"].to(device)
 
                 outputs = model(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
-                    labels=input_ids,
+                    labels=labels,
                 )
 
                 loss = outputs.loss.item()
                 total_loss += loss
 
-                progress_bar.set_postfix({"loss": f"{loss:.4f}"})
+                # Calculate accuracy
+                predictions = torch.argmax(outputs.logits, dim=1)
+                correct += (predictions == labels).sum().item()
+                total += labels.size(0)
+
+                accuracy = correct / total
+                progress_bar.set_postfix({
+                    "loss": f"{loss:.4f}",
+                    "accuracy": f"{accuracy:.4f}"
+                })
 
             except RuntimeError as e:
                 print(f"Error during evaluation: {str(e)}")
                 continue
 
-    return total_loss / len(val_loader)
+    return total_loss / len(val_loader), accuracy
 
 def main():
     print("\n=== Starting PEFT Fine-tuning Process ===\n")
@@ -128,17 +161,14 @@ def main():
     train_dataset = dataset["train"].shuffle(seed=42).select(range(min(MAX_SAMPLES, len(dataset["train"]))))
     val_dataset = dataset["test"].shuffle(seed=42).select(range(min(MAX_SAMPLES//5, len(dataset["test"]))))
 
-    # Convert dataset to list of texts
-    texts = [example["sms"] for example in train_dataset]
-    print(f"Number of training examples: {len(texts)}")
-
     # Prepare data
     print("\nPreparing dataloaders...")
-    train_loader, val_loader, tokenizer = prepare_dataloaders(texts, config)
+    train_loader, val_loader, tokenizer = prepare_dataloaders(train_dataset, val_dataset, config)
 
     # Setup model
     print("\nSetting up model...")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
     model = setup_peft_model()
     model.to(device)
 
@@ -154,6 +184,7 @@ def main():
     # Training loop
     print(f"\nTraining for {config.num_epochs} epochs...")
     best_val_loss = float('inf')
+    best_accuracy = 0.0
 
     try:
         for epoch in range(config.num_epochs):
@@ -161,20 +192,23 @@ def main():
             print("-" * 50)
 
             # Train
-            train_loss = train_epoch(model, train_loader, optimizer, device, epoch)
+            train_loss, train_accuracy = train_epoch(model, train_loader, optimizer, device, epoch)
 
             # Evaluate
-            val_loss = evaluate(model, val_loader, device)
+            val_loss, val_accuracy = evaluate(model, val_loader, device)
 
             print(f"\nEpoch {epoch + 1} Summary:")
             print(f"Train Loss: {train_loss:.4f}")
+            print(f"Train Accuracy: {train_accuracy:.4f}")
             print(f"Val Loss: {val_loss:.4f}")
+            print(f"Val Accuracy: {val_accuracy:.4f}")
 
             # Save best model
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            if val_accuracy > best_accuracy:
+                best_accuracy = val_accuracy
                 checkpoint_path = f"{config.output_dir}/checkpoint-best"
                 print(f"\nSaving best model checkpoint to {checkpoint_path}")
+                print(f"New best accuracy: {best_accuracy:.4f}")
                 model.save_pretrained(checkpoint_path)
 
             # Save regular checkpoint

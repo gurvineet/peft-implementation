@@ -6,8 +6,9 @@ from transformers import AutoTokenizer
 from config import config
 
 class TextDataset(Dataset):
-    def __init__(self, texts, tokenizer, max_length):
-        self.texts = texts
+    def __init__(self, dataset, tokenizer, max_length):
+        self.texts = [item["sms"] for item in dataset]
+        self.labels = [item["label"] for item in dataset]
         self.tokenizer = tokenizer
         self.max_length = max_length
 
@@ -16,8 +17,7 @@ class TextDataset(Dataset):
 
     def __getitem__(self, idx):
         text = self.texts[idx]
-        # Add special tokens and proper formatting for the model
-        text = f"{text}</s>"
+        label = self.labels[idx]
 
         encoding = self.tokenizer(
             text,
@@ -29,26 +29,22 @@ class TextDataset(Dataset):
 
         return {
             "input_ids": encoding["input_ids"].squeeze(),
-            "attention_mask": encoding["attention_mask"].squeeze()
+            "attention_mask": encoding["attention_mask"].squeeze(),
+            "labels": torch.tensor(label, dtype=torch.long)
         }
 
-def prepare_dataloaders(texts, config):
+def prepare_dataloaders(train_dataset, val_dataset, config):
     """Prepare training and validation dataloaders"""
     tokenizer = AutoTokenizer.from_pretrained(config.base_model_name)
 
-    # Configure tokenizer for DeepSeek model
+    # Configure tokenizer for padding
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    # Split data into train/val
-    train_size = int(0.9 * len(texts))
-    train_texts = texts[:train_size]
-    val_texts = texts[train_size:]
-
     # Create datasets
-    train_dataset = TextDataset(train_texts, tokenizer, config.max_length)
-    val_dataset = TextDataset(val_texts, tokenizer, config.max_length)
+    train_dataset = TextDataset(train_dataset, tokenizer, config.max_length)
+    val_dataset = TextDataset(val_dataset, tokenizer, config.max_length)
 
     # Create dataloaders
     train_loader = DataLoader(
