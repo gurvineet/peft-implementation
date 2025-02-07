@@ -1,0 +1,45 @@
+This is a technique in machine learning where an already trained model is further trained (or tuned) on a new, typically smaller, dataset for better performance on a specific task.
+
+Semantic-embedding: A representation of text in a high-dimensional space where distances between points correspond to semantic similarity. Phrases with similar meanings are closer together.
+
+Cosine similarity: A metric used to measure how similar two vectors are, typically used in the context of semantic embeddings to assess similarity of meanings.
+
+Vector databases: Specialized databases designed to store and handle vector data, often employed for facilitating fast and efficient similarity searches.
+
+Domain-Specific Task: A task that is specialized or relevant to a particular area of knowledge or industry, often requiring tailored AI responses.
+
+Prompt: In AI, a prompt is an input given to the model to generate a specific response or output.
+
+Prompt Tuning: This is a method to improve AI models by optimizing prompts so that the model produces better results for specific tasks.
+
+Hard Prompt: A manually created template used to guide an AI model's predictions. It requires human ingenuity to craft effective prompts.
+
+Soft Prompt: A series of tokens or embeddings optimized through deep learning to help guide model predictions, without necessarily making sense to humans.
+
+One-shot prompting: Giving an AI model a single example to learn from before it attempts a similar task.
+
+Few-shot prompting: Providing an AI model with a small set of examples, such as five or fewer, from which it can learn to generalize and perform tasks.
+
+Zero-shot prompting: This refers to the capability of an AI model to correctly respond to a prompt or question it hasn't explicitly been trained to answer, relying solely on its prior knowledge and training.
+
+Chain-of-Thought Prompting: A method of guiding a language model through a step-by-step reasoning process to help it solve complex tasks by explicitly detailing the logic needed to reach a conclusion.
+
+Probing: This is a method of examining what information is contained in different parts of a machine learning model.
+
+Linear Probing: A simple form of probing that involves attaching a linear classifier to a pre-trained model to adapt it to a new task without modifying the original model.
+
+Classification Head: It is the part of a neural network that is tailored to classify input data into defined categories.
+
+Fine-tuning: This is the process of adjusting a pre-trained model so it performs better on a new, similar task. It's like teaching an experienced doctor a new medical procedure; they're already a doctor, but they're improving their skills in a particular area.
+
+Catastrophic Forgetting: This happens when a model learns something new but forgets what it learned before. Imagine if you crammed for a history test and did great, but then forgot most of what you learned when you started studying for a math test.
+
+Parameter-efficient fine-tuning: A method of updating a predefined subset of a model's parameters to tailor it to specific tasks, without the need to modify the entire model, thus saving computational resources.
+
+Frozen Parameters: In the context of machine learning, this refers to model parameters that are not changed or updated during the process of training or fine-tuning.
+
+Low-Rank Adaptation (LoRA): A technique where a large matrix is approximated using two smaller matrices, greatly reducing the number of parameters that need to be trained during fine-tuning.
+
+Adapters: Additional model components inserted at various layers; only the parameters of these adapters are trained, not of the entire model.
+
+In the dynamic field of Artificial Intelligence, the shift from building models from the ground up to adapting existing foundational models is becoming increasingly prevalent. Mastery of adaptation techniques—from prompting methods such as few-shot learning and chain-of-thought prompting, to parameter-efficient fine-tuning techniques such as low-rank adaptation—empowers us to leverage pre-existing powerful models for diverse applications, enhancing creativity and efficiency in our projects.

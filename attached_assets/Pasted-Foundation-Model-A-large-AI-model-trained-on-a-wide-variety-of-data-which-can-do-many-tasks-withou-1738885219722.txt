@@ -1,0 +1,84 @@
+Foundation Model: A large AI model trained on a wide variety of data, which can do many tasks without much extra training.
+
+Adapted: Modified or adjusted to suit new conditions or a new purpose, i.e. in the context of foundation models.
+
+Generalize: The ability of a model to apply what it has learned from its training data to new, unseen data.
+
+Sequential data: Information that is arranged in a specific order, such as words in a sentence or events in time.
+
+Self-attention mechanism: The self-attention mechanism in a transformer is a process where each element in a sequence computes its representation by attending to and weighing the importance of all elements in the sequence, allowing the model to capture complex relationships and dependencies.
+
+Robustness: The strength of an AI model to maintain its performance despite challenges or changes in data.
+
+Open Access: Making data sets freely available to the public, so that anyone can use them for research and develop AI technologies.
+
+Semantic Equivalence: When different phrases or sentences convey the same meaning or idea.
+
+Textual Entailment: The relationship between text fragments where one fragment follows logically from the other.
+
+GLUE Tasks / Benchmarks
+
+Short Name	Full Name	Description
+CoLA	Corpus of Linguistic Acceptability	Measures the ability to determine if an English sentence is linguistically acceptable.
+SST-2	Stanford Sentiment Treebank	Consists of sentences from movie reviews and human annotations about their sentiment.
+MRPC	Microsoft Research Paraphrase Corpus	Focuses on identifying whether two sentences are paraphrases of each other.
+STS-B	Semantic Textual Similarity Benchmark	Involves determining how similar two sentences are in terms of semantic content.
+QQP	Quora Question Pairs	Aims to identify whether two questions asked on Quora are semantically equivalent.
+MNLI	Multi-Genre Natural Language Inference	Consists of sentence pairs labeled for textual entailment across multiple genres of text.
+QNLI	Question Natural Language Inference	Involves determining whether the content of a paragraph contains the answer to a question.
+RTE	Recognizing Textual Entailment	Requires understanding whether one sentence entails another.
+WNLI	Winograd Natural Language Inference	Tests a system's reading comprehension by having it determine the correct referent of a pronoun in a sentence, where understanding depends on contextual information provided by specific words or phrases.
+
+Coreference Resolution: This is figuring out when different words or phrases in a text, like the pronoun she and the president, refer to the same person or thing.
+
+SuperGLUE Tasks / Benchmarks:
+
+Short Name	Full Name	Description
+BoolQ	Boolean Questions	Involves answering a yes/no question based on a short passage.
+CB	CommitmentBank	Tests understanding of entailment and contradiction in a three-sentence format.
+COPA	Choice of Plausible Alternatives	Measures causal reasoning by asking for the cause/effect of a given sentence.
+MultiRC	Multi-Sentence Reading Comprehension	Involves answering questions about a paragraph where each question may have multiple correct answers.
+ReCoRD	Reading Comprehension with Commonsense Reasoning	Requires selecting the correct named entity from a passage to fill in the blank of a question.
+RTE	Recognizing Textual Entailment	Involves identifying whether a sentence entails, contradicts, or is neutral towards another sentence.
+WiC	Words in Context	Tests understanding of word sense disambiguation in different contexts.
+WSC	Winograd Schema Challenge	Focuses on resolving coreference resolution within a sentence, often requiring commonsense reasoning.
+AX-b	Broad Coverage Diagnostic	A diagnostic set to evaluate model performance on a broad range of linguistic phenomena.
+AX-g	Winogender Schema Diagnostics	Tests for the presence of gender bias in automated coreference resolution systems.
+
+Preprocessing: This is the process of preparing and cleaning data before it is used to train a machine learning model. It might involve removing errors, irrelevant information, or formatting the data in a way that the model can easily learn from it.
+
+Fine-tuning: After a model has been pre-trained on a large dataset, fine-tuning is an additional training step where the model is further refined with specific data to improve its performance on a particular type of task.
+
+Gigabytes/Terabytes: Units of digital information storage. One gigabyte (GB) is about 1 billion bytes, and one terabyte (TB) is about 1,000 gigabytes. In terms of text, a single gigabyte can hold roughly 1,000 books.
+
+Common Crawl: An open repository of web crawl data. Essentially, it is a large collection of content from the internet that is gathered by automatically scraping the web.
+
+Selection Bias: When the data used to train an AI model does not accurately represent the whole population or situation by virtue of the selection process, e.g. those choosing the data will tend to choose dataset their are aware of
+
+Historical Bias: Prejudices and societal inequalities of the past that are reflected in the data, influencing the AI in a way that perpetuates these outdated beliefs.
+
+Confirmation Bias: The tendency to favor information that confirms pre-existing beliefs, which can affect what data is selected for AI training.
+
+Discriminatory Outcomes: Unfair results produced by AI that disadvantage certain groups, often due to biases in the training data or malicious actors.
+
+Echo Chambers: Situations where biased AI reinforces and amplifies existing biases, leading to a narrow and distorted sphere of information.
+
+Bias Detection and Correction: Processes and algorithms designed to identify and remove biases from data before it's used to train AI models.
+
+Transparency and Accountability: Openness about how AI models are trained and the nature of their data, ensuring that developers are answerable for their AI's performance and impact.
+
+CommonCrawl: https://commoncrawl.org/
+Github: https://www.githubarchive.org/
+Wikipedia: https://dumps.wikimedia.org/
+Gutenberg project: https://www.gutenberg.org/
+
+
+GitHub is the best dataset because it contains a large amount of code, and the code is structured and clean. Wikipedia is the second-best dataset because it contains a large amount of text, including some code. CommonCrawl is the third-best dataset because it contains a large amount of text, but the text is unstructured and noisy. Gutenberg project is the worst dataset because it contains text that is not relevant to the task.
+
+Synthetic Voices: These are computer-generated voices that are often indistinguishable from real human voices. AI models have been trained on samples of speech to produce these realistic voice outputs.
+
+Content Provenance Tools: Tools designed to track the origin and history of digital content. They help verify the authenticity of the content by providing information about its creation, modification, and distribution history.
+
+Foundation models leverage advanced architectures and vast computational power to process unprecedented volumes of data, pushing machine learning into an exciting new territory. These models serve as robust platforms for developing a variety of applications, from language processing to image generation.
+
+While foundation models present vast opportunities, they also introduce increased risks of bias and misinformation, making the discussion around mitigating these risks essential.

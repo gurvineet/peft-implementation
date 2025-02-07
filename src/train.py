@@ -4,13 +4,18 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import get_peft_model, LoraConfig, TaskType
 from tqdm import tqdm
+from datasets import load_dataset
 from config import config
 from data_utils import prepare_dataloaders
 
 def setup_peft_model():
     """Initialize the PEFT model with LoRA configuration"""
     print("Loading base model...")
-    model = AutoModelForCausalLM.from_pretrained(config.base_model_name)
+    model = AutoModelForCausalLM.from_pretrained(
+        config.base_model_name,
+        trust_remote_code=True,
+        device_map="auto"
+    )
 
     print("Creating LoRA configuration...")
     peft_config = LoraConfig(
@@ -19,7 +24,8 @@ def setup_peft_model():
         lora_alpha=config.lora_alpha,
         lora_dropout=config.lora_dropout,
         bias="none",
-        target_modules=["c_attn", "c_proj"]  # GPT-2 specific attention modules
+        # DeepSeek specific attention modules
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"]
     )
 
     print("Converting to PEFT model...")
@@ -28,13 +34,18 @@ def setup_peft_model():
 
     return model
 
-def train_epoch(model, train_loader, optimizer, device):
+def train_epoch(model, train_loader, optimizer, device, epoch):
     """Train for one epoch"""
     model.train()
     total_loss = 0
-    progress_bar = tqdm(train_loader, desc="Training", leave=True)
+    total_batches = len(train_loader)
 
-    for batch_idx, batch in enumerate(progress_bar):
+    progress_bar = tqdm(enumerate(train_loader), 
+                       total=total_batches,
+                       desc=f"Epoch {epoch+1}", 
+                       leave=True)
+
+    for batch_idx, batch in progress_bar:
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
 
@@ -54,12 +65,19 @@ def train_epoch(model, train_loader, optimizer, device):
         optimizer.zero_grad()
 
         # Update progress bar
+        avg_loss = total_loss / (batch_idx + 1)
         progress_bar.set_postfix({
             "loss": f"{loss.item():.4f}",
-            "avg_loss": f"{total_loss / (batch_idx + 1):.4f}"
+            "avg_loss": f"{avg_loss:.4f}",
+            "processed": f"{(batch_idx+1)*config.batch_size}/{total_batches*config.batch_size}"
         })
 
-    return total_loss / len(train_loader)
+        # Log every N steps
+        if (batch_idx + 1) % config.logging_steps == 0:
+            print(f"\nStep {batch_idx+1}/{total_batches}")
+            print(f"Average Loss: {avg_loss:.4f}")
+
+    return total_loss / total_batches
 
 def evaluate(model, val_loader, device):
     """Evaluate the model"""
@@ -80,9 +98,12 @@ def evaluate(model, val_loader, device):
 
             loss = outputs.loss.item()
             total_loss += loss
+
+            # Update progress
+            avg_loss = total_loss / (batch_idx + 1)
             progress_bar.set_postfix({
                 "loss": f"{loss:.4f}",
-                "avg_loss": f"{total_loss / (batch_idx + 1):.4f}"
+                "avg_loss": f"{avg_loss:.4f}"
             })
 
     return total_loss / len(val_loader)
@@ -90,25 +111,21 @@ def evaluate(model, val_loader, device):
 def main():
     print("\n=== Starting PEFT Fine-tuning Process ===\n")
 
-    # Extended sample texts for demonstration
-    texts = [
-        "Hello, my name is Sarah and I'm a software engineer.",
-        "The weather today is sunny with clear blue skies.",
-        "I love to program in Python because it's versatile and readable.",
-        "The future of artificial intelligence looks promising and exciting.",
-        "Machine learning models are becoming more efficient over time.",
-        "Data science combines statistics, programming, and domain expertise.",
-        "Neural networks can learn complex patterns in data.",
-        "Deep learning has revolutionized natural language processing.",
-        "Transfer learning allows us to leverage pre-trained models.",
-        "Parameter efficient fine-tuning reduces computational costs.",
-        "The key to good model performance is quality training data.",
-        "GPT models have shown impressive capabilities in text generation.",
-        "Responsible AI development considers ethical implications.",
-        "Model optimization techniques help improve inference speed.",
-        "The intersection of AI and healthcare shows great potential."
-    ]
+    # Load the SMS spam dataset
+    print("Loading SMS spam dataset...")
+    dataset = load_dataset("sms_spam", split="train").train_test_split(
+        test_size=0.2, shuffle=True, seed=42
+    )
 
+    # Take a subset of the data for faster training
+    MAX_SAMPLES = 200  # Reduced sample size for faster training
+    print(f"\nUsing {MAX_SAMPLES} samples for training...")
+
+    train_dataset = dataset["train"].shuffle(seed=42).select(range(min(MAX_SAMPLES, len(dataset["train"]))))
+    val_dataset = dataset["test"].shuffle(seed=42).select(range(min(MAX_SAMPLES//5, len(dataset["test"]))))
+
+    # Convert dataset to list of texts
+    texts = [example["sms"] for example in train_dataset]
     print(f"Number of training examples: {len(texts)}")
 
     # Prepare data
@@ -121,9 +138,13 @@ def main():
     model = setup_peft_model()
     model.to(device)
 
-    # Setup optimizer
+    # Setup optimizer with weight decay
     print("\nSetting up optimizer...")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    optimizer = torch.optim.AdamW(
+        model.parameters(), 
+        lr=config.learning_rate,
+        weight_decay=0.01
+    )
 
     # Training loop
     print(f"\nTraining for {config.num_epochs} epochs...")
@@ -133,13 +154,17 @@ def main():
         print(f"\nEpoch {epoch + 1}/{config.num_epochs}")
         print("-" * 50)
 
-        train_loss = train_epoch(model, train_loader, optimizer, device)
+        # Train
+        train_loss = train_epoch(model, train_loader, optimizer, device, epoch)
+
+        # Evaluate
         val_loss = evaluate(model, val_loader, device)
 
-        print(f"\nTrain Loss: {train_loss:.4f}")
+        print(f"\nEpoch {epoch + 1} Summary:")
+        print(f"Train Loss: {train_loss:.4f}")
         print(f"Val Loss: {val_loss:.4f}")
 
-        # Save checkpoint if validation loss improves
+        # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             checkpoint_path = f"{config.output_dir}/checkpoint-best"
@@ -147,9 +172,10 @@ def main():
             model.save_pretrained(checkpoint_path)
 
         # Save regular checkpoint
-        checkpoint_path = f"{config.output_dir}/checkpoint-{epoch}"
-        print(f"Saving checkpoint to {checkpoint_path}")
-        model.save_pretrained(checkpoint_path)
+        if (epoch + 1) % 1 == 0:  # Save every epoch
+            checkpoint_path = f"{config.output_dir}/checkpoint-{epoch}"
+            print(f"Saving checkpoint to {checkpoint_path}")
+            model.save_pretrained(checkpoint_path)
 
     # Save final model
     print("\nSaving final model...")
