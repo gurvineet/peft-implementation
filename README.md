@@ -1,3 +1,5 @@
+1. Clone the repo
+```
 git clone https://github.com/gurvineet/peft-implementation.git
 cd peft-implementation
 ```
