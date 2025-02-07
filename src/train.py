@@ -15,6 +15,8 @@ from transformers import (
     DataCollatorWithPadding,
 )
 from peft import get_peft_model, LoraConfig, TaskType
+from peft.optimizers import create_loraplus_optimizer
+import bitsandbytes as bnb
 from datasets import load_dataset
 from config import config
 
@@ -39,8 +41,12 @@ def compute_metrics(eval_pred):
     """Compute metrics for evaluation"""
     predictions, labels = eval_pred
     predictions = np.argmax(predictions, axis=1)
+
+    # Calculate accuracy and other metrics
     accuracy = (predictions == labels).mean()
-    return {"accuracy": accuracy}
+    return {
+        "accuracy": accuracy,
+    }
 
 def preprocess_function(examples, tokenizer):
     """Preprocess the examples efficiently"""
@@ -52,28 +58,24 @@ def preprocess_function(examples, tokenizer):
         padding="max_length",
     )
 
-    # Convert star ratings to labels (0-5)
-    tokenized["labels"] = [
-        min(5, max(0, star)) for star in examples["star"]
-    ]
-
+    # Ensure labels are within valid range
+    tokenized["labels"] = examples["rating"]
     return tokenized
 
 def load_dataset_with_retry(logger, max_retries=3):
-    """Load dataset with retry mechanism and progress tracking"""
+    """Load dataset with retry mechanism"""
     for attempt in range(max_retries):
         try:
             logger.info(f"Attempt {attempt + 1}/{max_retries} to load dataset...")
             log_memory_usage(logger)
 
-            logger.info("Starting dataset download...")
+            # Load the CSV dataset
             dataset = load_dataset(
-                config.dataset_name,
-                split=f"train[:{config.num_samples}]",
-                cache_dir=config.cache_dir
+                'csv', 
+                data_files={'train': 'app_reviews.csv'},
+                split='train'
             )
 
-            logger.info("Dataset download complete")
             logger.info(f"Dataset loaded with {len(dataset)} examples")
             return dataset
 
@@ -87,7 +89,7 @@ def load_dataset_with_retry(logger, max_retries=3):
                 raise Exception(f"Failed to load dataset after {max_retries} attempts")
 
 def setup_peft_model(logger):
-    """Initialize the PEFT model with LoRA configuration"""
+    """Initialize the PEFT model with LoRA+ configuration"""
     logger.info(f"Initializing base model: {config.base_model_name}")
 
     # Initialize base model
@@ -98,7 +100,7 @@ def setup_peft_model(logger):
         label2id=config.label2id
     )
 
-    # Configure tokenizer
+    # Configure tokenizer with proper padding
     logger.info("Configuring tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
         config.base_model_name,
@@ -106,11 +108,12 @@ def setup_peft_model(logger):
         padding_side=config.padding_side
     )
 
+    # Set padding token for GPT-2
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
 
-    # Setup LoRA configuration
+    # Setup LoRA configuration with optimized parameters
     logger.info("Creating LoRA configuration...")
     peft_config = LoraConfig(
         task_type=TaskType.SEQ_CLS,
@@ -161,7 +164,7 @@ def main():
             desc="Preprocessing test dataset"
         )
 
-        # Setup training arguments with optimized values
+        # Setup training arguments
         training_args = TrainingArguments(
             output_dir=config.output_dir,
             learning_rate=config.learning_rate,
@@ -169,7 +172,7 @@ def main():
             per_device_eval_batch_size=config.batch_size,
             num_train_epochs=config.num_epochs,
             weight_decay=config.weight_decay,
-            eval_strategy="steps",
+            evaluation_strategy="steps",
             eval_steps=config.eval_steps,
             save_strategy="steps",
             save_steps=config.save_steps,
@@ -184,7 +187,15 @@ def main():
             disable_tqdm=config.disable_tqdm,
         )
 
-        # Initialize trainer
+        # Create LoRA+ optimizer
+        optimizer = create_loraplus_optimizer(
+            model=model,
+            optimizer_cls=bnb.optim.Adam8bit,
+            lr=config.learning_rate,
+            loraplus_lr_ratio=16,  # Higher ratio for more aggressive LoRA+ updates
+        )
+
+        # Initialize trainer with LoRA+ optimizer
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
         trainer = Trainer(
             model=model,
@@ -193,6 +204,7 @@ def main():
             eval_dataset=tokenized_test,
             data_collator=data_collator,
             compute_metrics=compute_metrics,
+            optimizers=(optimizer, None),  # Use LoRA+ optimizer with no scheduler
         )
 
         # Initial evaluation
