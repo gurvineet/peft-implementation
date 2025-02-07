@@ -1,9 +1,15 @@
 """Main training script for PEFT fine-tuning"""
 
 import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
+import numpy as np
+from transformers import (
+    AutoModelForSequenceClassification, 
+    AutoTokenizer,
+    Trainer, 
+    TrainingArguments,
+    DataCollatorWithPadding
+)
 from peft import get_peft_model, LoraConfig, TaskType
-from tqdm import tqdm
 from datasets import load_dataset
 from config import config
 from data_utils import prepare_dataloaders
@@ -16,6 +22,14 @@ def log_memory_usage():
     process = psutil.Process(os.getpid())
     print(f"\nCurrent memory usage: {process.memory_info().rss / 1024 / 1024:.2f} MB")
 
+def compute_metrics(eval_pred):
+    """Compute metrics for evaluation"""
+    predictions, labels = eval_pred
+    predictions = np.argmax(predictions, axis=1)
+    return {
+        "accuracy": (predictions == labels).mean(),
+    }
+
 def load_dataset_with_retry(max_retries=3, timeout=15):
     """Load dataset with retry mechanism and detailed progress tracking"""
     for attempt in range(max_retries):
@@ -27,7 +41,7 @@ def load_dataset_with_retry(max_retries=3, timeout=15):
             print("Starting dataset download...")
             dataset = load_dataset(
                 "sealuzh/app_reviews",
-                split=f"train[:2000]",  # Increased to 2000 samples
+                split=f"train[:2000]",
                 cache_dir=".cache"
             )
 
@@ -91,191 +105,76 @@ def setup_peft_model():
     print("\nTrainable parameters:")
     model.print_trainable_parameters()
 
-    return model
-
-def train_epoch(model, train_loader, optimizer, device, epoch):
-    """Train for one epoch"""
-    model.train()
-    total_loss = 0
-    correct = 0
-    total = 0
-
-    print(f"\nStarting training epoch {epoch+1}")
-    print(f"Number of batches: {len(train_loader)}")
-
-    progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}", leave=True)
-
-    for batch_idx, batch in enumerate(progress_bar):
-        try:
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            labels = batch["labels"].to(device)
-
-            optimizer.zero_grad()
-
-            outputs = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                labels=labels
-            )
-
-            loss = outputs.loss
-            total_loss += loss.item()
-
-            predictions = torch.argmax(outputs.logits, dim=1)
-            correct += (predictions == labels).sum().item()
-            total += labels.size(0)
-            current_accuracy = correct / total
-
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
-            optimizer.step()
-
-            progress_bar.set_postfix({
-                "batch": f"{batch_idx+1}/{len(train_loader)}",
-                "loss": f"{loss.item():.4f}",
-                "accuracy": f"{current_accuracy:.4f}"
-            })
-
-        except Exception as e:
-            print(f"\nError in batch {batch_idx}: {str(e)}")
-            continue
-
-    epoch_loss = total_loss / len(train_loader)
-    epoch_accuracy = correct / total
-    return epoch_loss, epoch_accuracy
-
-def evaluate(model, val_loader, device):
-    """Evaluate the model"""
-    model.eval()
-    total_loss = 0
-    correct = 0
-    total = 0
-
-    print("\nStarting evaluation...")
-    with torch.no_grad():
-        progress_bar = tqdm(val_loader, desc="Evaluating", leave=True)
-        for batch in progress_bar:
-            try:
-                input_ids = batch["input_ids"].to(device)
-                attention_mask = batch["attention_mask"].to(device)
-                labels = batch["labels"].to(device)
-
-                outputs = model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    labels=labels
-                )
-
-                loss = outputs.loss.item()
-                total_loss += loss
-
-                predictions = torch.argmax(outputs.logits, dim=1)
-                correct += (predictions == labels).sum().item()
-                total += labels.size(0)
-
-                current_accuracy = correct / total if total > 0 else 0
-                progress_bar.set_postfix({
-                    "loss": f"{loss:.4f}",
-                    "accuracy": f"{current_accuracy:.4f}"
-                })
-
-            except Exception as e:
-                print(f"\nError during evaluation: {str(e)}")
-                continue
-
-    accuracy = correct / total if total > 0 else 0
-    avg_loss = total_loss / len(val_loader) if len(val_loader) > 0 else float('inf')
-    return avg_loss, accuracy
-
+    return model, tokenizer
 
 def main():
     print("\n=== Starting PEFT Fine-tuning Process ===\n")
 
-    # Load app reviews dataset
-    print("Loading app reviews dataset...")
     try:
+        # Load and prepare dataset
         full_dataset = load_dataset_with_retry()
         print(f"Successfully loaded dataset with {len(full_dataset)} examples")
 
-        print("Shuffling and splitting dataset...")
-        full_dataset = full_dataset.shuffle(seed=42)
-
-        # Calculate split sizes (80/20 split)
-        train_size = 1600  # 80% of 2000
-        test_size = 400    # 20% of 2000
-        print(f"Using {train_size} examples for training and {test_size} for testing")
-
         # Split dataset
         dataset = full_dataset.train_test_split(
-            train_size=train_size,
-            test_size=test_size,
+            train_size=1600,  # 80% of 2000
+            test_size=400,    # 20% of 2000
             shuffle=True,
             seed=42
         )
 
-        train_dataset = dataset['train']
-        val_dataset = dataset['test']
-        print(f"Split complete. Train size: {len(train_dataset)}, Val size: {len(val_dataset)}")
+        # Setup model and tokenizer
+        model, tokenizer = setup_peft_model()
 
-        # Prepare data
-        print("\nPreparing dataloaders...")
-        train_loader, val_loader, _ = prepare_dataloaders(train_dataset, val_dataset, config)
-        print("Dataloaders prepared successfully")
-
-        # Setup model
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"\nUsing device: {device}")
-        model = setup_peft_model()
-        model.to(device)
-
-        # Setup optimizer
-        optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=config.learning_rate,
-            weight_decay=0.01
+        # Setup training arguments
+        training_args = TrainingArguments(
+            output_dir=config.output_dir,
+            learning_rate=config.learning_rate,
+            per_device_train_batch_size=config.batch_size,
+            per_device_eval_batch_size=config.batch_size,
+            num_train_epochs=config.num_epochs,
+            weight_decay=0.01,
+            evaluation_strategy="epoch",
+            save_strategy="epoch",
+            load_best_model_at_end=True,
+            save_total_limit=2,
+            logging_steps=10,
         )
 
-        print(f"\nTraining for {config.num_epochs} epochs...")
-        best_accuracy = 0.0
+        # Initialize trainer
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=dataset["train"],
+            eval_dataset=dataset["test"],
+            tokenizer=tokenizer,
+            data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
+            compute_metrics=compute_metrics,
+        )
 
-        # Create checkpoint directory if it doesn't exist
-        os.makedirs(config.output_dir, exist_ok=True)
+        # Initial evaluation
+        print("\nInitial evaluation:")
+        initial_metrics = trainer.evaluate()
+        print(f"Initial metrics: {initial_metrics}")
 
-        for epoch in range(config.num_epochs):
-            print(f"\nEpoch {epoch + 1}/{config.num_epochs}")
-            print("-" * 50)
-            log_memory_usage()  # Track memory usage before each epoch
+        # Training
+        print("\nStarting training...")
+        trainer.train()
 
-            train_loss, train_accuracy = train_epoch(model, train_loader, optimizer, device, epoch)
-            val_loss, val_accuracy = evaluate(model, val_loader, device)
+        # Final evaluation
+        print("\nFinal evaluation:")
+        final_metrics = trainer.evaluate()
+        print(f"Final metrics: {final_metrics}")
 
-            print(f"\nEpoch {epoch + 1} Summary:")
-            print(f"Train Loss: {train_loss:.4f} | Accuracy: {train_accuracy:.4f}")
-            print(f"Val Loss: {val_loss:.4f} | Accuracy: {val_accuracy:.4f}")
-
-            # Save checkpoint after each epoch
-            checkpoint_path = os.path.join(config.output_dir, f"checkpoint_epoch_{epoch+1}")
-            model.save_pretrained(checkpoint_path)
-            print(f"Saved checkpoint to {checkpoint_path}")
-
-            if val_accuracy > best_accuracy:
-                best_accuracy = val_accuracy
-                print(f"\nNew best accuracy: {best_accuracy:.4f}")
-                print("Saving best model...")
-                model.save_pretrained(f"{config.output_dir}/best")
-
-            log_memory_usage()  # Track memory usage after each epoch
+        # Save the final model
+        print("\nSaving final model...")
+        trainer.save_model(config.output_dir)
+        print("Training completed!")
 
     except Exception as e:
         print(f"\nError during training process: {str(e)}")
-        log_memory_usage()  # Log memory usage when error occurs
+        log_memory_usage()
         raise e
-
-    print("\nSaving final model...")
-    model.save_pretrained(config.output_dir)
-    print("Training completed!")
-    log_memory_usage()  # Final memory usage log
 
 if __name__ == "__main__":
     main()
