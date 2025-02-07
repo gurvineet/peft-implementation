@@ -3,6 +3,7 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer
+from config import config
 
 class TextDataset(Dataset):
     def __init__(self, texts, tokenizer, max_length):
@@ -15,6 +16,9 @@ class TextDataset(Dataset):
 
     def __getitem__(self, idx):
         text = self.texts[idx]
+        # Add special tokens and proper formatting for the model
+        text = f"{text}</s>"
+
         encoding = self.tokenizer(
             text,
             max_length=self.max_length,
@@ -32,7 +36,7 @@ def prepare_dataloaders(texts, config):
     """Prepare training and validation dataloaders"""
     tokenizer = AutoTokenizer.from_pretrained(config.base_model_name)
 
-    # Set padding token to EOS token if not set
+    # Configure tokenizer for DeepSeek model
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -50,13 +54,15 @@ def prepare_dataloaders(texts, config):
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.batch_size,
-        shuffle=True
+        shuffle=True,
+        num_workers=0  # Avoid multiprocessing issues
     )
 
     val_loader = DataLoader(
         val_dataset,
         batch_size=config.batch_size,
-        shuffle=False
+        shuffle=False,
+        num_workers=0
     )
 
     return train_loader, val_loader, tokenizer
