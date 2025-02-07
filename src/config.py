@@ -13,26 +13,26 @@ class TrainingConfig:
     padding_side: str = "right"
 
     # Dataset settings
-    dataset_name: str = "sealuzh/app_reviews"
-    num_samples: int = 2000
+    dataset_name: str = "app_reviews.csv"
+    num_samples: Optional[int] = None  # Use full dataset
     train_split: float = 0.8
     random_seed: int = 42
     cache_dir: str = ".cache"
 
     # LoRA hyperparameters
-    lora_r: int = 8
+    lora_r: int = 16
     lora_alpha: int = 32
     lora_dropout: float = 0.1
     target_modules: list = field(default_factory=lambda: ["c_attn", "c_proj"])
 
-    # Training hyperparameters - Optimized values
-    batch_size: int = 8  # Reduced from 16 to improve stability
-    learning_rate: float = 1e-4  # Reduced from 2e-4 for better stability
-    num_epochs: int = 3
+    # Training hyperparameters - Optimized for better convergence
+    batch_size: int = 4  # Reduced to create more steps per epoch
+    learning_rate: float = 2e-4  # Increased for faster initial learning
+    num_epochs: int = 10  # Increased for better convergence
     warmup_ratio: float = 0.1
-    max_grad_norm: float = 1.0  # Increased for better gradient stability
+    max_grad_norm: float = 1.0  # Increased for more stable updates
     weight_decay: float = 0.01
-    gradient_accumulation_steps: int = 2  # Added to maintain effective batch size
+    gradient_accumulation_steps: int = 2  # Reduced to update more frequently
 
     # Output settings
     output_dir: str = "peft_model"
@@ -40,27 +40,27 @@ class TrainingConfig:
     checkpoint_dir: str = "peft_model/checkpoints"
 
     # Training settings
-    eval_steps: int = 50
-    save_steps: int = 50
-    logging_steps: int = 10
-    save_total_limit: int = 2
+    eval_steps: int = 20  # More frequent evaluation
+    save_steps: int = 20  # More frequent saving
+    logging_steps: int = 10  # More frequent logging
+    save_total_limit: int = 3
 
     # Device settings
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     fp16: bool = False
 
     # Classification settings
-    num_labels: int = 6  # Ratings from 0 to 5
+    num_labels: int = 5  # Ratings from 1 to 5
     id2label: Dict[int, str] = field(
         default_factory=lambda: {
-            i: f"RATING_{i}"
-            for i in range(6)
+            i + 1: f"RATING_{i + 1}"
+            for i in range(5)
         }
     )
     label2id: Dict[str, int] = field(
         default_factory=lambda: {
-            f"RATING_{i}": i
-            for i in range(6)
+            f"RATING_{i + 1}": i + 1
+            for i in range(5)
         }
     )
 
@@ -75,8 +75,13 @@ class TrainingConfig:
         self.checkpoint_dir = f"{self.output_dir}/checkpoints"
 
         # Calculate steps based on dataset size and batch size
-        train_samples = int(self.num_samples * self.train_split)
-        steps_per_epoch = int(train_samples / (self.batch_size * self.gradient_accumulation_steps))
+        if self.num_samples:
+            train_samples = int(self.num_samples * self.train_split)
+        else:
+            # Estimate based on file size or use a default
+            train_samples = 1000  # Will be updated after dataset load
+
+        steps_per_epoch = max(1, int(train_samples / (self.batch_size * self.gradient_accumulation_steps)))
         self.total_steps = steps_per_epoch * self.num_epochs
         self.warmup_steps = int(self.total_steps * self.warmup_ratio)
 

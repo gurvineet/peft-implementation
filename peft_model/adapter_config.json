@@ -22,7 +22,7 @@
     "score"
   ],
   "peft_type": "LORA",
-  "r": 8,
+  "r": 16,
   "rank_pattern": {},
   "revision": null,
   "target_modules": [

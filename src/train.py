@@ -7,6 +7,7 @@ import psutil
 import time
 import torch
 import numpy as np
+import pandas as pd
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -15,9 +16,7 @@ from transformers import (
     DataCollatorWithPadding,
 )
 from peft import get_peft_model, LoraConfig, TaskType
-from peft.optimizers import create_loraplus_optimizer
-import bitsandbytes as bnb
-from datasets import load_dataset
+from datasets import load_dataset, Dataset
 from config import config
 
 def setup_logging():
@@ -44,12 +43,43 @@ def compute_metrics(eval_pred):
 
     # Calculate accuracy and other metrics
     accuracy = (predictions == labels).mean()
-    return {
+
+    # Calculate MAE for ratings (add 1 since we're using 0-based indices)
+    mae = np.abs((predictions + 1) - (labels + 1)).mean()
+
+    # Calculate per-class accuracy
+    class_accuracies = {}
+    for i in range(config.num_labels):
+        mask = labels == i
+        if mask.sum() > 0:
+            class_accuracies[f"class_{i+1}_accuracy"] = (predictions[mask] == labels[mask]).mean()
+
+    metrics = {
         "accuracy": accuracy,
+        "mae": mae,
+        **class_accuracies
     }
+
+    return metrics
+
+def validate_data(examples, logger):
+    """Validate the input data"""
+    valid_ratings = [rating for rating in examples["rating"] if 1 <= rating <= 5]
+    if len(valid_ratings) != len(examples["rating"]):
+        logger.warning(f"Found {len(examples['rating']) - len(valid_ratings)} invalid ratings")
+
+    valid_reviews = [review for review in examples["review"] if isinstance(review, str) and len(review.strip()) > 0]
+    if len(valid_reviews) != len(examples["review"]):
+        logger.warning(f"Found {len(examples['review']) - len(valid_reviews)} invalid reviews")
+
+    return len(valid_ratings) > 0 and len(valid_reviews) > 0
 
 def preprocess_function(examples, tokenizer):
     """Preprocess the examples efficiently"""
+    # Validate data
+    if not validate_data(examples, logging.getLogger(__name__)):
+        raise ValueError("Invalid data format detected")
+
     # Tokenize the reviews
     tokenized = tokenizer(
         examples["review"],
@@ -58,8 +88,13 @@ def preprocess_function(examples, tokenizer):
         padding="max_length",
     )
 
-    # Ensure labels are within valid range
-    tokenized["labels"] = examples["rating"]
+    # Convert ratings to 0-based index for the model (e.g., rating 1 -> class 0)
+    tokenized["labels"] = [rating - 1 for rating in examples["rating"]]
+
+    # Validate labels
+    if not all(0 <= label < config.num_labels for label in tokenized["labels"]):
+        raise ValueError("Invalid label values after conversion")
+
     return tokenized
 
 def load_dataset_with_retry(logger, max_retries=3):
@@ -69,14 +104,40 @@ def load_dataset_with_retry(logger, max_retries=3):
             logger.info(f"Attempt {attempt + 1}/{max_retries} to load dataset...")
             log_memory_usage(logger)
 
-            # Load the CSV dataset
-            dataset = load_dataset(
-                'csv', 
-                data_files={'train': 'app_reviews.csv'},
-                split='train'
-            )
+            # Load the CSV file using pandas first to check its content
+            df = pd.read_csv(config.dataset_name)
+            logger.info(f"Raw CSV data loaded: {len(df)} rows")
 
-            logger.info(f"Dataset loaded with {len(dataset)} examples")
+            # Convert pandas DataFrame to Hugging Face Dataset
+            dataset = Dataset.from_pandas(df)
+            logger.info(f"Converted to HF Dataset: {len(dataset)} examples")
+
+            # Filter out any invalid ratings
+            dataset = dataset.filter(lambda x: 1 <= x["rating"] <= 5)
+            logger.info(f"Dataset after filtering: {len(dataset)} examples")
+
+            # Update config with actual dataset size
+            if not config.num_samples:
+                config.num_samples = len(dataset)
+            elif config.num_samples > len(dataset):
+                logger.warning(f"Requested {config.num_samples} samples but only {len(dataset)} available")
+                config.num_samples = len(dataset)
+
+            # Recalculate steps
+            train_samples = int(config.num_samples * config.train_split)
+            steps_per_epoch = max(1, int(train_samples / (config.batch_size * config.gradient_accumulation_steps)))
+            config.total_steps = steps_per_epoch * config.num_epochs
+            config.warmup_steps = int(config.total_steps * config.warmup_ratio)
+
+            # Take a subset if specified
+            if config.num_samples < len(dataset):
+                dataset = dataset.shuffle(seed=config.random_seed).select(range(config.num_samples))
+                logger.info(f"Using {config.num_samples} examples from the dataset")
+
+            logger.info(f"Final dataset size: {len(dataset)} examples")
+            logger.info(f"Training samples: {train_samples}")
+            logger.info(f"Steps per epoch: {steps_per_epoch}")
+
             return dataset
 
         except Exception as e:
@@ -89,7 +150,7 @@ def load_dataset_with_retry(logger, max_retries=3):
                 raise Exception(f"Failed to load dataset after {max_retries} attempts")
 
 def setup_peft_model(logger):
-    """Initialize the PEFT model with LoRA+ configuration"""
+    """Initialize the PEFT model with LoRA configuration"""
     logger.info(f"Initializing base model: {config.base_model_name}")
 
     # Initialize base model
@@ -100,7 +161,7 @@ def setup_peft_model(logger):
         label2id=config.label2id
     )
 
-    # Configure tokenizer with proper padding
+    # Configure tokenizer
     logger.info("Configuring tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(
         config.base_model_name,
@@ -113,7 +174,7 @@ def setup_peft_model(logger):
         tokenizer.pad_token = tokenizer.eos_token
         model.config.pad_token_id = tokenizer.eos_token_id
 
-    # Setup LoRA configuration with optimized parameters
+    # Setup LoRA configuration
     logger.info("Creating LoRA configuration...")
     peft_config = LoraConfig(
         task_type=TaskType.SEQ_CLS,
@@ -187,15 +248,7 @@ def main():
             disable_tqdm=config.disable_tqdm,
         )
 
-        # Create LoRA+ optimizer
-        optimizer = create_loraplus_optimizer(
-            model=model,
-            optimizer_cls=bnb.optim.Adam8bit,
-            lr=config.learning_rate,
-            loraplus_lr_ratio=16,  # Higher ratio for more aggressive LoRA+ updates
-        )
-
-        # Initialize trainer with LoRA+ optimizer
+        # Initialize trainer
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
         trainer = Trainer(
             model=model,
@@ -204,7 +257,6 @@ def main():
             eval_dataset=tokenized_test,
             data_collator=data_collator,
             compute_metrics=compute_metrics,
-            optimizers=(optimizer, None),  # Use LoRA+ optimizer with no scheduler
         )
 
         # Initial evaluation
