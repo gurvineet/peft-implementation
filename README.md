@@ -1,24 +1,11 @@
-# Parameter-Efficient Fine-Tuning Implementation
+git clone https://github.com/gurvineet/peft-implementation.git
+cd peft-implementation
+```
 
-This repository contains an implementation of parameter-efficient fine-tuning (PEFT) using the Hugging Face PEFT library for adapting the GPT-2 model. The implementation focuses on fine-tuning GPT-2 for app review rating prediction using the LoRA (Low-Rank Adaptation) technique.
-
-## Features
-
-- Parameter-efficient fine-tuning using LoRA
-- Integration with Hugging Face's PEFT library
-- App review rating prediction (1-5 stars)
-- Model comparison utilities (base GPT-2 vs PEFT-tuned)
-- Memory-efficient training process
-- Progress tracking and checkpointing
-
-## Requirements
-
-- Python 3.x
-- PyTorch
-- Transformers
-- PEFT
-- Datasets
-- Tqdm
+2. Install dependencies:
+```bash
+pip install torch transformers peft datasets tqdm psutil
+```
 
 ## Usage
 
@@ -44,13 +31,18 @@ python src/compare_models.py
 
 ## Project Structure
 
-- `src/`
-  - `train.py`: Main training script
-  - `inference.py`: Inference utilities
-  - `compare_models.py`: Model comparison tools
-  - `data_utils.py`: Data handling utilities
-  - `check_dataset.py`: Dataset inspection script
-  - `config.py`: Configuration settings
+```
+.
+├── src/
+│   ├── train.py          # Main training script
+│   ├── inference.py      # Inference utilities
+│   ├── compare_models.py # Model comparison tools
+│   ├── data_utils.py     # Data handling utilities
+│   ├── check_dataset.py  # Dataset inspection script
+│   └── config.py         # Configuration settings
+├── peft_model/          # Model checkpoints and configs
+└── README.md
+```
 
 ## Model Details
 
@@ -58,8 +50,38 @@ The implementation uses the following PEFT configuration:
 - Base model: GPT-2
 - PEFT method: LoRA (Low-Rank Adaptation)
 - Task: Sequence Classification (Rating Prediction)
-- Dataset: App Reviews
+- Dataset: App Reviews Dataset (sealuzh/app_reviews)
+- Training Parameters:
+  - LoRA rank (r): 8
+  - LoRA alpha: 32
+  - Dropout: 0.1
+  - Learning rate: Configured in config.py
+  - Target modules: c_attn, c_proj (GPT-2 specific)
+
+## Development Process
+
+- Dataset preprocessing with robust error handling
+- Memory-efficient training implementation
+- Checkpoint saving after each epoch
+- Performance tracking with loss and accuracy metrics
+- Model evaluation on validation set
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
 MIT License
+
+## Citation
+
+If you use this implementation in your research, please cite:
+
+```bibtex
+@software{peft_implementation,
+  title={Parameter-Efficient Fine-Tuning Implementation},
+  year={2025},
+  publisher={GitHub},
+  url={https://github.com/gurvineet/peft-implementation}
+}

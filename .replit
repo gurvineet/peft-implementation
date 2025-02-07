@@ -26,6 +26,7 @@ args = "Compare Models"
 [[workflows.workflow]]
 name = "Train PEFT Model"
 author = "agent"
+mode = "sequential"
 
 [workflows.workflow.metadata]
 agentRequireRestartOnSave = false

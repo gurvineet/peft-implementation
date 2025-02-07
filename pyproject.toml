@@ -19,6 +19,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "trafilatura>=2.0.0",
     "transformers>=4.48.2",
+    "twilio>=9.4.4",
 ]
 
 [[tool.uv.index]]
