@@ -16,7 +16,7 @@ def log_memory_usage():
     process = psutil.Process(os.getpid())
     print(f"\nCurrent memory usage: {process.memory_info().rss / 1024 / 1024:.2f} MB")
 
-def load_dataset_with_retry(max_retries=3, timeout=15):  # Further reduced timeout
+def load_dataset_with_retry(max_retries=3, timeout=15):
     """Load dataset with retry mechanism and detailed progress tracking"""
     for attempt in range(max_retries):
         try:
@@ -27,8 +27,8 @@ def load_dataset_with_retry(max_retries=3, timeout=15):  # Further reduced timeo
             print("Starting dataset download...")
             dataset = load_dataset(
                 "sealuzh/app_reviews",
-                split=f"train[:50]",  # Keeping minimal size
-                cache_dir=".cache"  # Explicit cache directory
+                split=f"train[:2000]",  # Increased to 2000 samples
+                cache_dir=".cache"
             )
 
             print("Dataset download complete")
@@ -47,7 +47,7 @@ def load_dataset_with_retry(max_retries=3, timeout=15):  # Further reduced timeo
             log_memory_usage()
 
             if attempt < max_retries - 1:
-                wait_time = 2 ** attempt  # Exponential backoff
+                wait_time = 2 ** attempt
                 print(f"Waiting {wait_time} seconds before retrying...")
                 time.sleep(wait_time)
             else:
@@ -198,13 +198,12 @@ def main():
         full_dataset = load_dataset_with_retry()
         print(f"Successfully loaded dataset with {len(full_dataset)} examples")
 
-        # Take a subset for faster training during development
         print("Shuffling and splitting dataset...")
         full_dataset = full_dataset.shuffle(seed=42)
 
-        # Calculate split sizes
-        train_size = 40     # Using 40 samples for training
-        test_size = 10      # Using 10 samples for testing
+        # Calculate split sizes (80/20 split)
+        train_size = 1600  # 80% of 2000
+        test_size = 400    # 20% of 2000
         print(f"Using {train_size} examples for training and {test_size} for testing")
 
         # Split dataset
