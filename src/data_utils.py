@@ -7,8 +7,8 @@ from config import config
 
 class TextDataset(Dataset):
     def __init__(self, dataset, tokenizer, max_length):
-        self.texts = [item["sms"] for item in dataset]
-        self.labels = [item["label"] for item in dataset]
+        self.texts = [item["review"] for item in dataset]  # Changed to 'review' for app reviews
+        self.labels = [min(5, max(0, int(float(item["rating"])))) for item in dataset]  # Clamp ratings between 0-5
         self.tokenizer = tokenizer
         self.max_length = max_length
 
@@ -21,9 +21,9 @@ class TextDataset(Dataset):
 
         encoding = self.tokenizer(
             text,
+            truncation=True,
             max_length=self.max_length,
             padding="max_length",
-            truncation=True,
             return_tensors="pt"
         )
 
@@ -37,7 +37,7 @@ def prepare_dataloaders(train_dataset, val_dataset, config):
     """Prepare training and validation dataloaders"""
     tokenizer = AutoTokenizer.from_pretrained(config.base_model_name)
 
-    # Configure tokenizer for padding
+    # Configure tokenizer padding for GPT-2
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id

@@ -26,10 +26,10 @@
   "rank_pattern": {},
   "revision": null,
   "target_modules": [
-    "v_proj",
     "c_attn",
+    "q_proj",
     "c_proj",
-    "q_proj"
+    "v_proj"
   ],
   "task_type": "SEQ_CLS",
   "use_dora": false,
