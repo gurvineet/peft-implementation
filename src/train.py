@@ -4,9 +4,10 @@ import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from peft import get_peft_model, LoraConfig, TaskType
 from tqdm import tqdm
-from datasets import load_dataset
+from datasets import load_dataset, DownloadConfig
 from config import config
 from data_utils import prepare_dataloaders
+import time
 
 def setup_peft_model():
     """Initialize the PEFT model with LoRA configuration"""
@@ -123,41 +124,79 @@ def evaluate(model, val_loader, device):
     avg_loss = total_loss / len(val_loader) if len(val_loader) > 0 else float('inf')
     return avg_loss, accuracy
 
+def load_dataset_with_retry(max_retries=3, timeout=100):
+    """Load dataset with retry mechanism"""
+    for attempt in range(max_retries):
+        try:
+            print(f"\nAttempt {attempt + 1}/{max_retries} to load dataset...")
+            download_config = DownloadConfig(timeout=timeout)
+            dataset = load_dataset(
+                "sealuzh/app_reviews",
+                split="train",
+                download_config=download_config
+            )
+            print("Dataset loaded successfully!")
+            return dataset
+        except Exception as e:
+            print(f"Attempt {attempt + 1} failed: {str(e)}")
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff
+                print(f"Waiting {wait_time} seconds before retrying...")
+                time.sleep(wait_time)
+            else:
+                raise Exception("Failed to load dataset after maximum retries")
+
 def main():
     print("\n=== Starting PEFT Fine-tuning Process ===\n")
 
     # Load app reviews dataset
     print("Loading app reviews dataset...")
-    dataset = load_dataset("sealuzh/app_reviews", split=["train", "test"])
-
-    # Take a subset for faster training during development
-    train_size = 1000  # Using 1000 samples for training
-    test_size = 500   # Using 500 samples for testing
-
-    train_dataset = dataset[0].shuffle(seed=42).select(range(train_size))
-    val_dataset = dataset[1].shuffle(seed=42).select(range(test_size))
-
-    # Prepare data
-    print("\nPreparing dataloaders...")
-    train_loader, val_loader, _ = prepare_dataloaders(train_dataset, val_dataset, config)
-
-    # Setup model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"\nUsing device: {device}")
-    model = setup_peft_model()
-    model.to(device)
-
-    # Setup optimizer
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config.learning_rate,
-        weight_decay=0.01
-    )
-
-    print(f"\nTraining for {config.num_epochs} epochs...")
-    best_accuracy = 0.0
-
     try:
+        full_dataset = load_dataset_with_retry()
+        print(f"Successfully loaded dataset with {len(full_dataset)} examples")
+
+        # Take a subset for faster training during development
+        print("Shuffling and splitting dataset...")
+        full_dataset = full_dataset.shuffle(seed=42)
+
+        # Calculate split sizes
+        train_size = 1000  # Using 1000 samples for training
+        test_size = 500    # Using 500 samples for testing
+        print(f"Using {train_size} examples for training and {test_size} for testing")
+
+        # Split dataset
+        dataset = full_dataset.train_test_split(
+            train_size=train_size,
+            test_size=test_size,
+            shuffle=True,
+            seed=42
+        )
+
+        train_dataset = dataset['train']
+        val_dataset = dataset['test']
+        print(f"Split complete. Train size: {len(train_dataset)}, Val size: {len(val_dataset)}")
+
+        # Prepare data
+        print("\nPreparing dataloaders...")
+        train_loader, val_loader, _ = prepare_dataloaders(train_dataset, val_dataset, config)
+        print("Dataloaders prepared successfully")
+
+        # Setup model
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"\nUsing device: {device}")
+        model = setup_peft_model()
+        model.to(device)
+
+        # Setup optimizer
+        optimizer = torch.optim.AdamW(
+            model.parameters(),
+            lr=config.learning_rate,
+            weight_decay=0.01
+        )
+
+        print(f"\nTraining for {config.num_epochs} epochs...")
+        best_accuracy = 0.0
+
         for epoch in range(config.num_epochs):
             print(f"\nEpoch {epoch + 1}/{config.num_epochs}")
             print("-" * 50)
@@ -175,14 +214,13 @@ def main():
                 print("Saving best model...")
                 model.save_pretrained(f"{config.output_dir}/best")
 
-    except KeyboardInterrupt:
-        print("\nTraining interrupted by user")
     except Exception as e:
-        print(f"\nError during training: {str(e)}")
-    finally:
-        print("\nSaving final model...")
-        model.save_pretrained(config.output_dir)
-        print("Training completed!")
+        print(f"\nError during training process: {str(e)}")
+        raise e
+
+    print("\nSaving final model...")
+    model.save_pretrained(config.output_dir)
+    print("Training completed!")
 
 if __name__ == "__main__":
     main()

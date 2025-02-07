@@ -7,8 +7,8 @@ from config import config
 
 class TextDataset(Dataset):
     def __init__(self, dataset, tokenizer, max_length):
-        self.texts = [item["review"] for item in dataset]  # Changed to 'review' for app reviews
-        self.labels = [min(5, max(0, int(float(item["rating"])))) for item in dataset]  # Clamp ratings between 0-5
+        self.texts = [item["review"] for item in dataset]  # Using 'review' field for text
+        self.labels = [min(5, max(0, item["star"])) for item in dataset]  # Using 'star' field for ratings
         self.tokenizer = tokenizer
         self.max_length = max_length
 
